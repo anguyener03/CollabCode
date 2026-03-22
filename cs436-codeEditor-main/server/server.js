@@ -13,7 +13,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // In-memory room store
-// rooms.get(code) => { code, hostWs, participants: Map<ws, {name, isHost}>, started }
+// rooms.get(code) => { code, hostWs, participants: Map<ws, {name, isHost, isEditor}>, started }
 const rooms = new Map();
 
 function generateRoomCode() {
@@ -113,7 +113,8 @@ wss.on('connection', (ws) => {
           ws.roomCode = roomCode;
           ws.participantName = name;
 
-          room.participants.set(ws, { name, isHost });
+          // Host starts as editor; all others start as viewers
+          room.participants.set(ws, { name, isHost, isEditor: isHost });
           if (isHost) room.hostWs = ws;
 
           // Send current state back to the joining client
@@ -123,8 +124,8 @@ wss.on('connection', (ws) => {
             data: { participants: participantList, code: room.code, started: room.started },
           }));
 
-          // Notify others
-          broadcastToRoom(roomCode, { event: 'participant-joined', data: { name, isHost } }, ws);
+          // Notify others (new joiners are always non-editors)
+          broadcastToRoom(roomCode, { event: 'participant-joined', data: { name, isHost, isEditor: isHost } }, ws);
           console.log(`[WS] "${name}" joined room ${roomCode}`);
           break;
         }
@@ -143,8 +144,41 @@ wss.on('connection', (ws) => {
           const { roomCode, content } = data;
           const room = rooms.get(roomCode);
           if (!room) return;
+          // Reject updates from non-editors (server-side enforcement)
+          const sender = room.participants.get(ws);
+          if (!sender?.isEditor) return;
           room.code = content;
           broadcastToRoom(roomCode, { event: 'code-update', data: { content } }, ws);
+          break;
+        }
+
+        case 'grant-editor': {
+          const { roomCode, targetName } = data;
+          const room = rooms.get(roomCode);
+          if (!room || ws !== room.hostWs) return;
+          for (const [targetWs, info] of room.participants) {
+            if (info.name === targetName) {
+              room.participants.set(targetWs, { ...info, isEditor: true });
+              break;
+            }
+          }
+          broadcastToRoom(roomCode, { event: 'editor-granted', data: { name: targetName } });
+          console.log(`[WS] Editor granted to "${targetName}" in room ${roomCode}`);
+          break;
+        }
+
+        case 'revoke-editor': {
+          const { roomCode, targetName } = data;
+          const room = rooms.get(roomCode);
+          if (!room || ws !== room.hostWs) return;
+          for (const [targetWs, info] of room.participants) {
+            if (info.name === targetName) {
+              room.participants.set(targetWs, { ...info, isEditor: false });
+              break;
+            }
+          }
+          broadcastToRoom(roomCode, { event: 'editor-revoked', data: { name: targetName } });
+          console.log(`[WS] Editor revoked from "${targetName}" in room ${roomCode}`);
           break;
         }
 

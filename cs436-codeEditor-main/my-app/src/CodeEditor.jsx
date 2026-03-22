@@ -36,7 +36,7 @@ const ResizeHandle = () => (
   </PanelResizeHandle>
 );
 
-const CodeEditor = ({ userName, roomCode, isHost, ws, participants, setParticipants, onLeave }) => {
+const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, setParticipants, onLeave }) => {
   const editorRefs = useRef({});
   const panelGroupRef = useRef(null);
   const debounceTimeout = useRef(null);
@@ -93,6 +93,7 @@ const CodeEditor = ({ userName, roomCode, isHost, ws, participants, setParticipa
   };
 
   const handleContentChange = (value) => {
+    if (!isEditor) return; // defense in depth — Monaco readOnly handles the UI
     setTabs((prev) =>
       prev.map((tab) => (tab.id === currentTab ? { ...tab, content: value } : tab))
     );
@@ -263,6 +264,7 @@ const CodeEditor = ({ userName, roomCode, isHost, ws, participants, setParticipa
                         theme="vs-dark"
                         defaultLanguage="python"
                         value={tab.content}
+                        options={{ readOnly: !isEditor }}
                         onMount={(editor) => onMount(editor, tab.id)}
                         onChange={(value) => handleContentChange(value)}
                       />
@@ -282,7 +284,7 @@ const CodeEditor = ({ userName, roomCode, isHost, ws, participants, setParticipa
           <ResizeHandle />
 
           <Panel defaultSize={30} minSize={10}>
-            <Chat userName={userName} roomCode={roomCode} ws={ws} participants={participants} />
+            <Chat userName={userName} roomCode={roomCode} isHost={isHost} ws={ws} participants={participants} />
           </Panel>
         </PanelGroup>
       </Box>

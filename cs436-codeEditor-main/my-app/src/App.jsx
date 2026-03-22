@@ -11,6 +11,7 @@ const App = () => {
   const [roomCode, setRoomCode] = useState("");
   const [userName, setUserName] = useState("");
   const [isHost, setIsHost] = useState(false);
+  const [isEditor, setIsEditor] = useState(false);
   const [participants, setParticipants] = useState([]);
   const ws = useRef(null);
   const toast = useToast();
@@ -29,13 +30,25 @@ const App = () => {
           setParticipants(data.participants);
           break;
         case "participant-joined":
-          setParticipants((prev) => [...prev, { name: data.name, isHost: data.isHost }]);
+          setParticipants((prev) => [...prev, { name: data.name, isHost: data.isHost, isEditor: data.isEditor }]);
           break;
         case "participant-left":
           setParticipants((prev) => prev.filter((p) => p.name !== data.name));
           break;
         case "session-started":
           setView("editor");
+          break;
+        case "editor-granted":
+          if (data.name === userName) setIsEditor(true);
+          setParticipants((prev) =>
+            prev.map((p) => p.name === data.name ? { ...p, isEditor: true } : p)
+          );
+          break;
+        case "editor-revoked":
+          if (data.name === userName) setIsEditor(false);
+          setParticipants((prev) =>
+            prev.map((p) => p.name === data.name ? { ...p, isEditor: false } : p)
+          );
           break;
         case "host-left":
           toast({
@@ -70,6 +83,7 @@ const App = () => {
     setUserName(name);
     setRoomCode(code);
     setIsHost(true);
+    setIsEditor(true); // host is always an editor
 
     openSocket((socket) => {
       socket.send(JSON.stringify({
@@ -119,6 +133,7 @@ const App = () => {
     setRoomCode("");
     setUserName("");
     setIsHost(false);
+    setIsEditor(false);
     setParticipants([]);
   };
 
@@ -142,6 +157,7 @@ const App = () => {
           userName={userName}
           roomCode={roomCode}
           isHost={isHost}
+          isEditor={isEditor}
           ws={ws}
           participants={participants}
           setParticipants={setParticipants}

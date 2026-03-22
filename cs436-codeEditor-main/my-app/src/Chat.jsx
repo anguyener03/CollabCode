@@ -9,7 +9,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 
-const Chat = ({ userName, roomCode, ws, participants }) => {
+const Chat = ({ userName, roomCode, isHost, ws, participants }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef(null);
@@ -56,24 +56,62 @@ const Chat = ({ userName, roomCode, ws, participants }) => {
     }
   };
 
+  const handleToggleEditor = (participant) => {
+    if (!ws.current) return;
+    ws.current.send(JSON.stringify({
+      event: participant.isEditor ? "revoke-editor" : "grant-editor",
+      data: { roomCode, targetName: participant.name },
+    }));
+  };
+
+  // Badge color: teal = host, green = editor, gray = viewer
+  const badgeColor = (p) => {
+    if (p.isHost) return "teal";
+    if (p.isEditor) return "green";
+    return "gray";
+  };
+
+  const badgeLabel = (p) => {
+    if (p.isHost) return "Host";
+    if (p.isEditor) return "Editor";
+    return "Viewer";
+  };
+
   return (
     <Box h="100%" display="flex" flexDirection="column" p={2}>
-      {/* Participant badges */}
+      {/* Participant list */}
       <Box mb={2} px={1}>
-        <Text fontSize="xs" color="gray.500" mb={1}>
+        <Text fontSize="xs" color="gray.500" mb={2}>
           IN SESSION ({participants.length})
         </Text>
-        <HStack wrap="wrap" spacing={1}>
+        <VStack align="stretch" spacing={1}>
           {participants.map((p) => (
-            <Badge
-              key={p.name}
-              colorScheme={p.isHost ? "teal" : "gray"}
-              fontSize="xs"
-            >
-              {p.name}
-            </Badge>
+            <HStack key={p.name} justify="space-between">
+              <HStack spacing={2}>
+                <Badge colorScheme={badgeColor(p)} fontSize="xs">
+                  {badgeLabel(p)}
+                </Badge>
+                <Text fontSize="sm" color="white">
+                  {p.name}
+                  {p.name === userName && (
+                    <Text as="span" color="gray.500" fontSize="xs"> (you)</Text>
+                  )}
+                </Text>
+              </HStack>
+              {/* Grant/revoke button — only host can see these, not for themselves */}
+              {isHost && !p.isHost && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorScheme={p.isEditor ? "red" : "teal"}
+                  onClick={() => handleToggleEditor(p)}
+                >
+                  {p.isEditor ? "Revoke" : "Make Editor"}
+                </Button>
+              )}
+            </HStack>
           ))}
-        </HStack>
+        </VStack>
       </Box>
 
       {/* Message list */}
