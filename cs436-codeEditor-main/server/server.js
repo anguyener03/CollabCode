@@ -191,6 +191,12 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'cursor-update': {
+          const { roomCode, name, line, column } = data;
+          broadcastToRoom(roomCode, { event: 'cursor-update', data: { name, line, column } }, ws);
+          break;
+        }
+
         case 'request-code-state': {
           const { roomCode } = data;
           const room = rooms.get(roomCode);

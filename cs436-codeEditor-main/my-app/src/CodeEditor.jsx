@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import {
   Box,
   Badge,
@@ -29,6 +29,7 @@ import Chat from "./Chat";
 import { executeCode } from "./pistonAPI";
 
 const DEFAULT_LAYOUT = [40, 30, 30];
+const CURSOR_COLORS = ["#f97316", "#a855f7", "#ec4899", "#eab308", "#3b82f6", "#ef4444"];
 
 const ResizeHandle = () => (
   <PanelResizeHandle className="panel-resize-handle">
@@ -40,6 +41,10 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
   const editorRefs = useRef({});
   const panelGroupRef = useRef(null);
   const debounceTimeout = useRef(null);
+  const monacoRef = useRef(null);
+  const remoteCursors = useRef(new Map()); // Map<name, { widget, decorationIds }>
+  const cursorThrottle = useRef(null);
+  const participantsRef = useRef(participants);
 
   const [tabs, setTabs] = useState([{ id: 1, name: "main.py", content: "" }]);
   const [currentTab, setCurrentTab] = useState(1);
@@ -48,6 +53,77 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
   const [isError, setIsError] = useState(false);
   const [newTabName, setNewTabName] = useState("");
   const { isOpen, onOpen, onClose } = useDisclosure();
+
+  // Keep participantsRef in sync so renderRemoteCursor always has fresh data
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
+
+  // Render a remote cursor widget for a participant
+  const renderRemoteCursor = useCallback((name, line, column) => {
+    const editor = editorRefs.current[currentTab];
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+
+    const others = participantsRef.current.filter((p) => p.name !== userName);
+    const idx = others.findIndex((p) => p.name === name);
+    const color = CURSOR_COLORS[idx >= 0 ? idx % CURSOR_COLORS.length : 0];
+
+    // Remove existing widget for this user
+    const existing = remoteCursors.current.get(name);
+    if (existing) {
+      editor.removeContentWidget(existing.widget);
+      editor.deltaDecorations(existing.decorationIds, []);
+    }
+
+    // Build the DOM node: colored bar with a floating name label above
+    const domNode = document.createElement("div");
+    domNode.style.cssText = "position: relative; pointer-events: none;";
+
+    const label = document.createElement("div");
+    label.textContent = name;
+    label.style.cssText = `
+      position: absolute; bottom: 100%; left: 0;
+      background: ${color}; color: white;
+      font-size: 10px; padding: 1px 5px; border-radius: 3px 3px 3px 0;
+      white-space: nowrap; pointer-events: none; z-index: 100;
+    `;
+
+    const bar = document.createElement("div");
+    bar.style.cssText = `width: 2px; height: 18px; background: ${color};`;
+
+    domNode.appendChild(label);
+    domNode.appendChild(bar);
+
+    const widget = {
+      getId: () => `remote-cursor-${name}`,
+      getDomNode: () => domNode,
+      getPosition: () => ({
+        position: { lineNumber: line, column },
+        preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
+      }),
+    };
+
+    editor.addContentWidget(widget);
+
+    const decorationIds = editor.deltaDecorations([], [{
+      range: new monaco.Range(line, 1, line, 1),
+      options: { isWholeLine: false },
+    }]);
+
+    remoteCursors.current.set(name, { widget, decorationIds });
+  }, [currentTab, userName]);
+
+  // Remove a single remote cursor
+  const removeRemoteCursor = useCallback((name) => {
+    const editor = editorRefs.current[currentTab];
+    const entry = remoteCursors.current.get(name);
+    if (editor && entry) {
+      editor.removeContentWidget(entry.widget);
+      editor.deltaDecorations(entry.decorationIds, []);
+    }
+    remoteCursors.current.delete(name);
+  }, [currentTab]);
 
   // Set up WebSocket message handler and request current code state on mount
   useEffect(() => {
@@ -70,23 +146,35 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
           );
           break;
         case "participant-joined":
-          setParticipants((prev) => [...prev, { name: data.name, isHost: data.isHost }]);
+          setParticipants((prev) => [...prev, { name: data.name, isHost: data.isHost, isEditor: data.isEditor }]);
           break;
         case "participant-left":
           setParticipants((prev) => prev.filter((p) => p.name !== data.name));
+          removeRemoteCursor(data.name);
+          break;
+        case "cursor-update":
+          renderRemoteCursor(data.name, data.line, data.column);
           break;
         default:
-          // Pass unhandled events up to App.jsx's handler
           if (prevHandler) prevHandler(event);
           break;
       }
     };
 
-    // Request current code so late-joiners get synced
     ws.current.send(JSON.stringify({ event: "request-code-state", data: { roomCode } }));
 
     return () => {
       if (ws.current) ws.current.onmessage = prevHandler;
+      // Clean up all remote cursor widgets on unmount
+      const editor = editorRefs.current[currentTab];
+      if (editor) {
+        remoteCursors.current.forEach(({ widget, decorationIds }) => {
+          editor.removeContentWidget(widget);
+          editor.deltaDecorations(decorationIds, []);
+        });
+      }
+      remoteCursors.current.clear();
+      if (cursorThrottle.current) clearTimeout(cursorThrottle.current);
     };
   }, [roomCode]);
 
@@ -95,7 +183,7 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
   };
 
   const handleContentChange = (value) => {
-    if (!isEditor) return; // defense in depth — Monaco readOnly handles the UI
+    if (!isEditor) return;
     setTabs((prev) =>
       prev.map((tab) => (tab.id === currentTab ? { ...tab, content: value } : tab))
     );
@@ -174,9 +262,24 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
     URL.revokeObjectURL(url);
   };
 
-  const onMount = (editor, tabId) => {
+  const onMount = (editor, monaco, tabId) => {
     editorRefs.current[tabId] = editor;
+    monacoRef.current = monaco;
     editor.focus();
+
+    // Send cursor position updates to other participants
+    editor.onDidChangeCursorPosition((e) => {
+      if (cursorThrottle.current) return;
+      cursorThrottle.current = setTimeout(() => {
+        cursorThrottle.current = null;
+        if (ws.current?.readyState === WebSocket.OPEN) {
+          ws.current.send(JSON.stringify({
+            event: "cursor-update",
+            data: { roomCode, name: userName, line: e.position.lineNumber, column: e.position.column },
+          }));
+        }
+      }, 50);
+    });
   };
 
   return (
@@ -267,7 +370,7 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
                         defaultLanguage="python"
                         value={tab.content}
                         options={{ readOnly: !isEditor }}
-                        onMount={(editor) => onMount(editor, tab.id)}
+                        onMount={(editor, monaco) => onMount(editor, monaco, tab.id)}
                         onChange={(value) => handleContentChange(value)}
                       />
                     </TabPanel>
