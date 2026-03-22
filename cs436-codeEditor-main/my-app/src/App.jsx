@@ -11,10 +11,18 @@ const App = () => {
   const [roomCode, setRoomCode] = useState("");
   const [userName, setUserName] = useState("");
   const [isHost, setIsHost] = useState(false);
-  const [isEditor, setIsEditor] = useState(false);
   const [participants, setParticipants] = useState([]);
   const ws = useRef(null);
   const toast = useToast();
+
+  // Derive isEditor from participants during render — avoids stale closure issues.
+  // Host always has isEditor: true in their participant entry (set server-side).
+  // Falls back to isHost so the host can edit even before room-joined fires.
+  const userNameRef = useRef("");
+  const isHostRef = useRef(false);
+  const isEditor =
+    isHost ||
+    participants.some((p) => p.name === userNameRef.current && p.isEditor);
 
   const openSocket = useCallback((onReady) => {
     const socket = new WebSocket("ws://localhost:4000");
@@ -30,7 +38,10 @@ const App = () => {
           setParticipants(data.participants);
           break;
         case "participant-joined":
-          setParticipants((prev) => [...prev, { name: data.name, isHost: data.isHost, isEditor: data.isEditor }]);
+          setParticipants((prev) => [
+            ...prev,
+            { name: data.name, isHost: data.isHost, isEditor: data.isEditor },
+          ]);
           break;
         case "participant-left":
           setParticipants((prev) => prev.filter((p) => p.name !== data.name));
@@ -39,15 +50,15 @@ const App = () => {
           setView("editor");
           break;
         case "editor-granted":
-          if (data.name === userName) setIsEditor(true);
+          // Update participants — isEditor is derived from this, so the
+          // affected client's Monaco will automatically become editable.
           setParticipants((prev) =>
-            prev.map((p) => p.name === data.name ? { ...p, isEditor: true } : p)
+            prev.map((p) => (p.name === data.name ? { ...p, isEditor: true } : p))
           );
           break;
         case "editor-revoked":
-          if (data.name === userName) setIsEditor(false);
           setParticipants((prev) =>
-            prev.map((p) => p.name === data.name ? { ...p, isEditor: false } : p)
+            prev.map((p) => (p.name === data.name ? { ...p, isEditor: false } : p))
           );
           break;
         case "host-left":
@@ -80,10 +91,11 @@ const App = () => {
     });
     const { roomCode: code } = await res.json();
 
+    userNameRef.current = name;
+    isHostRef.current = true;
     setUserName(name);
     setRoomCode(code);
     setIsHost(true);
-    setIsEditor(true); // host is always an editor
 
     openSocket((socket) => {
       socket.send(JSON.stringify({
@@ -104,6 +116,8 @@ const App = () => {
       throw new Error("Room not found");
     }
 
+    userNameRef.current = name;
+    isHostRef.current = false;
     setUserName(name);
     setRoomCode(upper);
     setIsHost(false);
@@ -129,11 +143,12 @@ const App = () => {
       ws.current.close();
       ws.current = null;
     }
+    userNameRef.current = "";
+    isHostRef.current = false;
     setView("landing");
     setRoomCode("");
     setUserName("");
     setIsHost(false);
-    setIsEditor(false);
     setParticipants([]);
   };
 
