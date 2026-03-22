@@ -76,6 +76,8 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
           setParticipants((prev) => prev.filter((p) => p.name !== data.name));
           break;
         default:
+          // Pass unhandled events up to App.jsx's handler
+          if (prevHandler) prevHandler(event);
           break;
       }
     };
