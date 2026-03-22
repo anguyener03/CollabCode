@@ -45,6 +45,8 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
   const remoteCursors = useRef(new Map()); // Map<name, { widget, decorationIds }>
   const cursorThrottle = useRef(null);
   const participantsRef = useRef(participants);
+  const cursorColorMap = useRef(new Map()); // Map<name, color> — stable color per participant
+  const colorIndexRef = useRef(0);
 
   const [tabs, setTabs] = useState([{ id: 1, name: "main.py", content: "" }]);
   const [currentTab, setCurrentTab] = useState(1);
@@ -75,15 +77,21 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
     }
   }, [isEditor]);
 
+  const getCursorColor = useCallback((name) => {
+    if (!cursorColorMap.current.has(name)) {
+      cursorColorMap.current.set(name, CURSOR_COLORS[colorIndexRef.current % CURSOR_COLORS.length]);
+      colorIndexRef.current += 1;
+    }
+    return cursorColorMap.current.get(name);
+  }, []);
+
   // Render a remote cursor widget for a participant
   const renderRemoteCursor = useCallback((name, line, column) => {
     const editor = editorRefs.current[currentTab];
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
 
-    const others = participantsRef.current.filter((p) => p.name !== userName);
-    const idx = others.findIndex((p) => p.name === name);
-    const color = CURSOR_COLORS[idx >= 0 ? idx % CURSOR_COLORS.length : 0];
+    const color = getCursorColor(name);
 
     // Remove existing widget for this user
     const existing = remoteCursors.current.get(name);
@@ -128,7 +136,7 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
     }]);
 
     remoteCursors.current.set(name, { widget, decorationIds });
-  }, [currentTab, userName]);
+  }, [currentTab, getCursorColor]);
 
   // Remove a single remote cursor
   const removeRemoteCursor = useCallback((name) => {
