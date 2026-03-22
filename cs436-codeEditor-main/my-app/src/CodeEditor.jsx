@@ -59,6 +59,22 @@ const CodeEditor = ({ userName, roomCode, isHost, isEditor, ws, participants, se
     participantsRef.current = participants;
   }, [participants]);
 
+  // When this client becomes an editor, immediately broadcast their cursor position.
+  // Monaco suppresses onDidChangeCursorPosition in readOnly mode, so the host
+  // wouldn't see their cursor until they physically moved it otherwise.
+  useEffect(() => {
+    if (!isEditor) return;
+    const editor = editorRefs.current[currentTab];
+    if (!editor || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
+    const position = editor.getPosition();
+    if (position) {
+      ws.current.send(JSON.stringify({
+        event: "cursor-update",
+        data: { roomCode, name: userName, line: position.lineNumber, column: position.column },
+      }));
+    }
+  }, [isEditor]);
+
   // Render a remote cursor widget for a participant
   const renderRemoteCursor = useCallback((name, line, column) => {
     const editor = editorRefs.current[currentTab];
